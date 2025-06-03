@@ -2,9 +2,6 @@ import torch
 import torch.nn as nn
 import torchvision
 
-
-
-
 import copy
 import os
 import pathlib
@@ -242,106 +239,6 @@ def build_taylor_pruner(net, train_loader: DataLoader, device, pruner: TaylorSte
             if param.grad is not None:
                 param.grad = None
         flag = False
-
-
-def build_taylor_clsa_pruner(net, train_loader: DataLoader, device, pruner: TaylorStepPruner, theta, delta, result_dir, cfg):
-    train_loader = DataLoader(train_loader.dataset, batch_size=cfg.batch_size, shuffle=False, num_workers=8, pin_memory=True)
-    clean_probs_all = []
-    indices_all = []
-    features_all = []
-    net_feature = torch.nn.Sequential(*(list(net.children())[:-1]))
-    # print(net_feature)
-    pbar = tqdm(train_loader, ascii=' >', desc='backward')
-    for it, sample in enumerate(pbar):
-        indices = sample['index']
-        input, _ = sample['data']
-        input = input.to(device)
-        labels = sample['label'].to(device)
-        logits = net(input)
-        features = net_feature(input)
-        features = torch.flatten(features, 1)
-        # if it == 0:
-        #     print(features.shape)
-        probs = F.softmax(logits, dim=1)
-        js = js_divergence(probs, labels)
-        indices_all.append(indices.cpu().detach())
-        features_all.append(features.cpu().detach())
-
-        clean_probs_all.append((1 - js).cpu().detach())
-        # clean_probs = [int(train_loader.dataset.targets[idx] == label) for idx, label in zip(indices.tolist(), labels.tolist())]
-    indices_all = torch.cat(indices_all, dim=0)
-    clean_probs_all = torch.cat(clean_probs_all, dim=0)
-    # noisy_labels = torch.Tensor(train_loader.dataset.noisy_labels)
-    # noisy_labels = noisy_labels[indices_all]
-
-    # sort
-    samples_ts = torch.cat([indices_all.unsqueeze(1), clean_probs_all.unsqueeze(1)], dim=1)
-    # samples_ts = torch.cat([samples_ts[torch.argsort(samples_ts[:, 1], descending=True)], indices_all], dim=1)
-    samples_ts = samples_ts[torch.argsort(samples_ts[:, 1], descending=True)]
-
-    with open(f'{result_dir}/data_clean_probs.txt', 'w', encoding='utf-8') as f:
-        for sample in samples_ts:
-            print('\t'.join(map(str, sample.tolist())), file=f)
-    indices_sorted = samples_ts[:, 0].to(torch.int)
-    print('Taylor pruner: theta {}, delta {}'.format(theta, delta))
-    batch_size = train_loader.batch_size
-    train_dataset = train_loader.dataset
-    num_sample = round(delta)  # batch_size *
-    # [clean, noise]
-    sample_inds = [indices_sorted[:num_sample], indices_sorted[-num_sample:]]
-    # classify
-    noisy_labels = train_loader.dataset.noisy_labels
-    class_clean = [[] for _ in range(cfg.noise_nc)]
-    class_noise = [[] for _ in range(cfg.noise_nc)]
-    for sample_cln, sample_ns in zip(sample_inds[0], sample_inds[1]):
-        class_clean[noisy_labels[sample_cln]].append(sample_cln)
-        class_noise[noisy_labels[sample_ns]].append(sample_ns)
-    # weighted
-    num_cls_clean = torch.Tensor([len(ls) for ls in class_clean])
-    # weight_cls_clean = (torch.max(num_cls_clean) + torch.min(num_cls_clean) - num_cls_clean) / torch.sum(num_cls_clean) # F.softmax(torch.Tensor(num_cls_clean))
-    weight_cls_clean = num_cls_clean / torch.sum(num_cls_clean) # F.softmax(torch.Tensor(num_cls_clean))
-    num_cls_noise = torch.Tensor([len(ls) for ls in class_noise])
-    weight_cls_noise = num_cls_noise / torch.sum(num_cls_noise) # F.softmax(torch.Tensor(num_cls_noise))
-    print(num_cls_clean, weight_cls_clean, num_cls_noise, weight_cls_noise, sep='\n')
-    # print(torch.sum(weight_cls_clean), torch.max(weight_cls_clean), torch.sum(weight_cls_noise), torch.max(weight_cls_noise))
-
-    pruner.set_storage()
-    for i in range(cfg.noise_nc):
-        class_inds = [class_clean[i], class_noise[i]]
-        ratios = [weight_cls_clean[i].item(), theta * weight_cls_noise[i].item()]
-        # ratios = [1, theta]
-        clean = True
-        for indices, ratio in zip(class_inds, ratios):
-            # print(len(indices))
-            subset = torch.utils.data.Subset(train_dataset, indices)
-            loader = DataLoader(subset, batch_size=batch_size, num_workers=8)
-            for sample in loader:
-                x1, x2 = sample['data']
-                x = x1.to(device)
-                y = sample['label'].to(device)
-                logits = net(x)
-                probs = F.softmax(logits, dim=1)
-                js = js_divergence(probs, y)
-                clean_probs = (1 - js) if clean else js
-
-                N, C = logits.shape
-                given_labels = torch.full(size=(N, C), fill_value=cfg.eps / (C - 1)).to(device)
-                given_labels.scatter_(dim=1, index=torch.unsqueeze(y, dim=1), value=1 - cfg.eps)
-                losses = cross_entropy(logits, given_labels, reduction='none') #+ cross_entropy(logits2, given_labels, reduction='none')
-                # losses = F.cross_entropy(logits1, y)
-                # loss = losses.mean()
-                # loss.backward()
-                losses.backward(gradient=clean_probs)
-                # for param in net.parameters():
-                #     if param.grad is not None:
-                #         param.grad.data = torch.abs(param.grad.data)
-            # calculate importance
-            pruner.store_importance(add=clean, ratio=ratio)
-            # clear grad
-            for param in net.parameters():
-                if param.grad is not None:
-                    param.grad = None
-            clean = False
 
 
 def build_clsa_pruner(net, train_loader: DataLoader, device, pruner: ClassAwarePruner, cfg):
