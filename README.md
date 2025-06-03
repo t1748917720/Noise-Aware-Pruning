@@ -5,5 +5,5 @@ The source code for our paper **Towards Lightweight Noise-Robust Models via Nois
 
 Framework
 ---
-![framework](asserts/method.jpg)
+![framework](asserts/framework.jpg)
 
