@@ -282,8 +282,6 @@ def prune(net, train_loader, test_loader, device, result_dir, method, rate, para
     example_inputs = example_inputs.to(device)
     print("-- Input size:", example_inputs.shape)
 
-    if method == "*Taylor_":
-        method = "*Taylor"
     if method == "random":
         imp = tp.importance.RandomImportance()
     elif method == "l1":
@@ -302,12 +300,9 @@ def prune(net, train_loader, test_loader, device, result_dir, method, rate, para
     elif method == 'taylor_0':
         imp = tp.importance.TaylorImportance(group_reduction='max')
         one_backward(example_data, net, device)
-    elif method == 'LPSR':  # SPL
-        imp = tp.importance.TaylorImportance(normalizer='standarization')
-        one_backward(example_data, net, device)
     elif method == "clsa":
         imp = tp.importance.TaylorImportance()
-    elif method == "*Taylor" or method == "*Taylor+clsa":
+    elif method == "NAP":
         imp = tp.importance.TaylorImportance()
     else:
         raise NotImplementedError
@@ -315,7 +310,7 @@ def prune(net, train_loader, test_loader, device, result_dir, method, rate, para
     ignored_layers = [net.fc]
     iterative_steps = 1
 
-    if method == "*Taylor":
+    if method == "NAP":
         pruner = TaylorStepPruner(
             net,
             example_inputs,
@@ -325,16 +320,6 @@ def prune(net, train_loader, test_loader, device, result_dir, method, rate, para
             ignored_layers=ignored_layers,
         )
         build_taylor_pruner(net, train_loader, device, pruner, params.theta, params.delta, result_dir, params)
-    elif method == "*Taylor+clsa":
-        pruner = TaylorStepPruner(
-            net,
-            example_inputs,
-            importance=imp,
-            iterative_steps=iterative_steps,
-            pruning_ratio=rate,
-            ignored_layers=ignored_layers,
-        )
-        build_taylor_clsa_pruner(net, train_loader, device, pruner, params.theta, params.delta, result_dir, params)
     elif method == "clsa":
         pruner = ClassAwarePruner(
             net,
@@ -545,7 +530,7 @@ def main(cfg, device):
     if cfg.result_file is not None:
         init_acc = round(accuracy_init, 3)
         best_acc = round(best_accuracy, 3)
-        if cfg.prune_method == '*Taylor':
+        if cfg.prune_method == 'NAP':
             # cfg.log.split('-')[0],
             result_ls = [init_acc, cfg.prune_rate, cfg.theta, cfg.delta, cfg.k, prune_info[-1], best_acc, best_epoch, round(best_accuracy - accuracy_init, 3)]
         else:
@@ -576,7 +561,7 @@ def parse_args():
         config.log = f'{config.net}-{config.log_prefix}'
     if config.prune_method is not None:
         config.log = f'{config.prune_rate}_{config.prune_method}' # _{config.theta}_{config.delta}
-        if config.prune_method == '*Taylor':
+        if config.prune_method == 'NAP':
             config.log += f'-{config.theta}_{config.delta}_{config.k}'
         # if config.ideal:
         #     config.log += '-ideal'
